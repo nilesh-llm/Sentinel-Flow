@@ -2,7 +2,12 @@ const express = require('express');
 const mysql = require('mysql');
 const app = express();
 
-const connection = mysql.createConnection({ host: 'localhost', user: 'root', password: 'password' });
+const connection = mysql.createConnection({ 
+  host: process.env.DB_HOST || 'localhost', 
+  user: process.env.DB_USER || 'app_user', 
+  password: process.env.DB_PASSWORD, 
+  database: process.env.DB_NAME || 'your_database_name'
+});
 
 app.get('/user', (req, res) => {
   const username = req.query.username;
