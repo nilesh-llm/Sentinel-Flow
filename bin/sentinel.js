@@ -2,6 +2,7 @@
 
 require('dotenv').config();
 
+const { execSync } = require('child_process');
 const fs = require('fs');
 const { Command } = require('commander');
 const simpleGit = require('simple-git');
@@ -22,6 +23,16 @@ async function main() {
    */
   function printCliError(error) {
     console.error(chalk.red(`✖ ${error.message}`));
+  }
+
+  /**
+   * Quote a file path so it can be safely passed to execSync.
+   *
+   * @param {string} value
+   * @returns {string}
+   */
+  function shellQuote(value) {
+    return `'${value.replace(/'/g, `'\\''`)}'`;
   }
 
   /**
@@ -73,11 +84,53 @@ async function main() {
 
         console.log(chalk.blue('🔍 Scanning local file: ' + file));
 
-        const oldCode = fs.readFileSync(file, 'utf8');
-        const fixedCode = await fixVulnerability(oldCode);
+        const originalCode = fs.readFileSync(file, 'utf8');
+        let currentCode = originalCode;
+        let lastError = null;
+        let attempt = 1;
+        const MAX_ATTEMPTS = 3;
+        let verifiedCode = null;
 
-        fs.writeFileSync(file, fixedCode, 'utf8');
-        console.log(chalk.green('✨ Local file rewritten securely.'));
+        while (attempt <= MAX_ATTEMPTS) {
+          console.log(chalk.blue(`🧠 Generating secure patch (Attempt ${attempt}/${MAX_ATTEMPTS})...`));
+
+          const fixedCode = await fixVulnerability(currentCode, lastError);
+          fs.writeFileSync(file, fixedCode, 'utf8');
+
+          try {
+            console.log(chalk.blue('🧪 Verifying generated code locally with node -c...'));
+            execSync(`node -c ${shellQuote(file)}`, { stdio: 'pipe' });
+            console.log(chalk.green('✅ Code verified locally. No syntax errors.'));
+            console.log(chalk.green('✨ Local file rewritten securely.'));
+            verifiedCode = fixedCode;
+            break;
+          } catch (error) {
+            lastError = error.message;
+            currentCode = fixedCode;
+            console.error(
+              chalk.red(
+                '⚠️ AI introduced a syntax error. Initiating self-healing loop (Attempt ' + attempt + ')...'
+              )
+            );
+
+            if (attempt === MAX_ATTEMPTS) {
+              fs.writeFileSync(file, originalCode, 'utf8');
+              console.error(
+                chalk.bgRed.white(
+                  ' FATAL: Sentinel Flow could not produce syntactically valid code after 3 attempts. Aborting without pushing to GitLab. '
+                )
+              );
+              process.exit(1);
+            }
+          }
+
+          attempt += 1;
+        }
+
+        if (!verifiedCode) {
+          fs.writeFileSync(file, originalCode, 'utf8');
+          process.exit(1);
+        }
 
         const branchName = 'sentinel-heal-' + Date.now();
 
